@@ -6,35 +6,35 @@ from datetime import datetime
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Outils Prynvision", layout="wide")
 
-# --- STYLE MODE SOMBRE FORCÉ ---
+# --- STYLE ADAPTATIF (SANS FORÇAGE SOMBRE) ---
 st.markdown("""
     <style>
-    /* Fond principal */
-    .stApp {
-        background-color: #0E1117;
-        color: #FFFFFF;
-    }
-    /* Style des onglets */
+    /* Style des onglets pour assurer la visibilité dans les deux modes */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
+        gap: 10px;
     }
     .stTabs [data-baseweb="tab"] {
         height: 50px;
         white-space: pre;
-        background-color: #161B22;
         border-radius: 4px 4px 0px 0px;
-        gap: 1px;
         padding-top: 10px;
         padding-bottom: 10px;
     }
+    /* Couleur bleue pour l'onglet sélectionné */
     .stTabs [aria-selected="true"] {
-        background-color: #1F6FEB !important;
+        color: #1F6FEB !important;
+        border-bottom-color: #1F6FEB !important;
     }
-    /* Boutons d'export en bleu */
+    /* Boutons d'export uniformisés en bleu */
     div.stDownloadButton > button {
         background-color: #3498db !important;
         color: white !important;
         width: 100%;
+        border: none;
+    }
+    div.stDownloadButton > button:hover {
+        background-color: #2980b9 !important;
+        color: white !important;
     }
     </style>
     """, unsafe_allow_html=True)

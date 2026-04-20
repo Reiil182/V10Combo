@@ -2,10 +2,42 @@ import streamlit as st
 import pandas as pd
 import re
 from datetime import datetime
-from io import BytesIO
 
-# Configuration de la page
-st.set_page_config(page_title="Prynvision Toolsuite Web", layout="wide")
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="Outils Prynvision", layout="wide")
+
+# --- STYLE MODE SOMBRE FORCÉ ---
+st.markdown("""
+    <style>
+    /* Fond principal */
+    .stApp {
+        background-color: #0E1117;
+        color: #FFFFFF;
+    }
+    /* Style des onglets */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre;
+        background-color: #161B22;
+        border-radius: 4px 4px 0px 0px;
+        gap: 1px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #1F6FEB !important;
+    }
+    /* Boutons d'export en bleu */
+    div.stDownloadButton > button {
+        background-color: #3498db !important;
+        color: white !important;
+        width: 100%;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- LOGIQUE TECHNIQUE : RAPPORT D'EXTRACTION ---
 def extraire_donnees_ext(file_content):
@@ -105,7 +137,7 @@ def analyser_v10_logic(df_v10, df_plume):
     return pd.DataFrame(anomalies), pd.DataFrame(travaux)
 
 # --- INTERFACE ---
-st.title("🛡️ Prynvision Toolsuite Web")
+st.title("🛡️ Outils Prynvision")
 
 tab_v10, tab_ext = st.tabs(["📊 Analyse V10 / Plume", "📹 Rapport d'Extraction"])
 
@@ -130,31 +162,24 @@ with tab_v10:
             st.error("Le fichier V10 est requis.")
 
     if 'df_anom' in st.session_state:
-        # Barre de recherche commune pour les deux onglets
         search_v10 = st.text_input("🔍 Filtrer les résultats (Site, INC, Raison...)", key="search_v10")
-        
-        # Séparation en sous-onglets
         sub_tab_maint, sub_tab_trav = st.tabs(["🔧 Anomalies Maintenance", "🏗️ Sites en Travaux"])
         
         with sub_tab_maint:
             df_f_maint = st.session_state['df_anom']
             if search_v10:
                 df_f_maint = df_f_maint[df_f_maint.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
-            
             st.dataframe(df_f_maint, use_container_width=True)
             if not df_f_maint.empty:
-                csv_m = df_f_maint.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button("📥 Exporter Maintenance (CSV)", csv_m, "Export_Maintenance.csv", "text/csv")
+                st.download_button("📥 Exporter Maintenance (CSV)", df_f_maint.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Export_Maintenance.csv", "text/csv")
 
         with sub_tab_trav:
             df_f_trav = st.session_state['df_trav']
             if search_v10:
                 df_f_trav = df_f_trav[df_f_trav.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
-            
             st.dataframe(df_f_trav, use_container_width=True)
             if not df_f_trav.empty:
-                csv_t = df_f_trav.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button("📥 Exporter Travaux (CSV)", csv_t, "Export_Travaux.csv", "text/csv")
+                st.download_button("📥 Exporter Travaux (CSV)", df_f_trav.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Export_Travaux.csv", "text/csv")
 
 with tab_ext:
     st.header("Rapport d'Extraction")
@@ -164,7 +189,5 @@ with tab_ext:
         if df_ext is not None:
             search_ext = st.text_input("🔍 Filtrer les extractions...", key="search_ext")
             df_f = df_ext[df_ext.apply(lambda r: r.astype(str).str.contains(search_ext, case=False).any(), axis=1)] if search_ext else df_ext
-            
             st.dataframe(df_f, use_container_width=True)
-            csv_e = df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 Exporter le Rapport (CSV)", csv_e, "Rapport_Extractions.csv", "text/csv")
+            st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")

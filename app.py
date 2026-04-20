@@ -1,14 +1,12 @@
 import streamlit as st
 import pandas as pd
 import re
-import os
 from datetime import datetime
-from io import BytesIO
 
 # Configuration de la page
-st.set_page_config(page_title="Prynvision Toolsuite", layout="wide")
+st.set_page_config(page_title="Prynvision Toolsuite Web", layout="wide")
 
-# --- LOGIQUE TECHNIQUE COMMUNE ---
+# --- LOGIQUE TECHNIQUE (COPIÉE DE TES FICHIERS) ---
 def extraire_donnees_ext(file_content):
     debuts, extractions = {}, []
     lignes = file_content.decode('latin-1', errors='ignore').splitlines()
@@ -65,8 +63,7 @@ def analyser_v10_logic(df_v10, df_plume):
             states[site]['travaux'] = True; states[site]['reason'] = ack if "travaux" in ack.lower() else comm
             if states[site]['date_trav'] is None: states[site]['date_trav'] = row['dt']
             
-    # Construction Maintenance
-    anomalies = []
+    anomalies, travaux = [], []
     if df_plume is not None:
         df_plume.columns = [c.strip() for c in df_plume.columns]
         m_list = [{'Site': s, 'INC_V10': v['inc']} for s, v in states.items() if v['maint'] and v['inc']]
@@ -77,14 +74,18 @@ def analyser_v10_logic(df_v10, df_plume):
             for _, r in anom_df.iterrows():
                 anomalies.append({"Code et Nom du Site": r['Site'], "N° INC": r['INC_V10'], "Statut Plume": r['État'], "Statut Prynvision": "En maintenance", "Affecté à": r.get('Affecté à', 'N/A')})
     
-    # Construction Travaux
-    travaux = []
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
             diff = (maintenant - v['date_trav']).days
             travaux.append({"Code et Nom du Site": s, "Mise en Travaux": v['date_trav'].strftime('%d/%m/%Y'), "Depuis (Jours)": f"{diff} jours", "Statut Prynvision": "En Travaux", "Raison (V10)": v['reason']})
             
     return pd.DataFrame(anomalies), pd.DataFrame(travaux)
+
+# --- FONCTION DE FILTRAGE UNIFIÉE ---
+def filter_dataframe(df, query):
+    if not query:
+        return df
+    return df[df.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1)]
 
 # --- INTERFACE ---
 st.title("🛡️ Prynvision Toolsuite Web")
@@ -106,21 +107,24 @@ with tab1:
             
             df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
             
-            st.toast(f"Analyse terminée : {len(df_anom)} anomalies, {len(df_trav)} travaux")
-            
-            sub1, sub2 = st.tabs(["Anomalies Maintenance", "Sites en Travaux"])
-            with sub1:
-                st.dataframe(df_anom, use_container_width=True)
-                if not df_anom.empty:
-                    st.download_button("Export Maintenance", df_anom.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Maint.csv", "text/csv")
-            with sub2:
-                # Note: Streamlit ne permet pas facilement de colorer seulement 2 colonnes par ligne
-                # On affiche donc le tableau propre, triable et filtrable nativement
-                st.dataframe(df_trav, use_container_width=True)
-                if not df_trav.empty:
-                    st.download_button("Export Travaux", df_trav.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Travaux.csv", "text/csv")
-        else:
-            st.error("Importez au moins le fichier V10.")
+            # Stockage en session pour permettre le filtrage après le clic
+            st.session_state['df_anom'] = df_anom
+            st.session_state['df_trav'] = df_trav
+            st.success(f"Analyse terminée : {len(df_anom)} anomalies, {len(df_trav)} sites en travaux.")
+
+    if 'df_anom' in st.session_state:
+        search_v10 = st.text_input("🔍 Filtrer les résultats V10 (IDRH, Site, INC...)", key="search_v10")
+        
+        col_res1, col_res2 = st.columns(2)
+        with col_res1:
+            st.write("**Anomalies Maintenance**")
+            df_filtered_anom = filter_dataframe(st.session_state['df_anom'], search_v10)
+            st.dataframe(df_filtered_anom, use_container_width=True)
+        
+        with col_res2:
+            st.write("**Sites en Travaux**")
+            df_filtered_trav = filter_dataframe(st.session_state['df_trav'], search_v10)
+            st.dataframe(df_filtered_trav, use_container_width=True)
 
 with tab2:
     st.subheader("Rapport d'Extraction")
@@ -128,6 +132,9 @@ with tab2:
     if file_ext:
         df_ext = extraire_donnees_ext(file_ext.getvalue())
         if df_ext is not None:
-            st.success(f"Fichier analysé avec succès.")
-            st.dataframe(df_ext, use_container_width=True)
-            st.download_button("📥 Exporter le Rapport (CSV)", df_ext.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Extractions.csv", "text/csv")
+            search_ext = st.text_input("🔍 Filtrer les extractions (Agent, Site...)", key="search_ext")
+            df_filtered_ext = filter_dataframe(df_ext, search_ext)
+            st.dataframe(df_filtered_ext, use_container_width=True)
+            
+            csv = df_filtered_ext.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 Exporter ce que je vois (CSV)", csv, "Rapport_Filtre.csv", "text/csv")

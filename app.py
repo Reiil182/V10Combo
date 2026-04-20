@@ -6,31 +6,29 @@ from datetime import datetime
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Outils Prynvision", layout="wide")
 
-# --- STYLE ADAPTATIF (SANS FORÇAGE SOMBRE) ---
+# --- STYLE PERSONNALISÉ (BOUTONS ET ONGLETS) ---
 st.markdown("""
     <style>
-    /* Style des onglets pour assurer la visibilité dans les deux modes */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-    }
+    /* Onglets plus visibles */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] {
         height: 50px;
         white-space: pre;
         border-radius: 4px 4px 0px 0px;
-        padding-top: 10px;
-        padding-bottom: 10px;
+        padding: 10px 20px;
     }
-    /* Couleur bleue pour l'onglet sélectionné */
     .stTabs [aria-selected="true"] {
         color: #1F6FEB !important;
         border-bottom-color: #1F6FEB !important;
+        font-weight: bold;
     }
-    /* Boutons d'export uniformisés en bleu */
+    /* Boutons d'exportation bleus */
     div.stDownloadButton > button {
         background-color: #3498db !important;
         color: white !important;
         width: 100%;
         border: none;
+        padding: 10px;
     }
     div.stDownloadButton > button:hover {
         background-color: #2980b9 !important;
@@ -149,15 +147,20 @@ with tab_v10:
     
     if st.button("LANCER L'ANALYSE V10", type="primary"):
         if file_v10:
-            df_v10_raw = pd.read_csv(file_v10, sep=';', encoding='latin-1')
-            df_p_raw = None
-            if file_plume:
-                df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
-            
-            df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
-            st.session_state['df_anom'] = df_anom
-            st.session_state['df_trav'] = df_trav
-            st.success(f"Analyse terminée.")
+            try:
+                df_v10_raw = pd.read_csv(file_v10, sep=';', encoding='latin-1')
+                df_p_raw = None
+                if file_plume:
+                    df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
+                
+                df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
+                st.session_state['df_anom'] = df_anom
+                st.session_state['df_trav'] = df_trav
+                
+                # Pop-up de succès avec les nombres
+                st.success(f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)")
+            except Exception as e:
+                st.error(f"Erreur lors de l'analyse : {e}")
         else:
             st.error("Le fichier V10 est requis.")
 
@@ -190,4 +193,5 @@ with tab_ext:
             search_ext = st.text_input("🔍 Filtrer les extractions...", key="search_ext")
             df_f = df_ext[df_ext.apply(lambda r: r.astype(str).str.contains(search_ext, case=False).any(), axis=1)] if search_ext else df_ext
             st.dataframe(df_f, use_container_width=True)
-            st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")
+            if not df_f.empty:
+                st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")

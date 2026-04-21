@@ -6,7 +6,7 @@ from datetime import datetime
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Outils Prynvision", layout="wide")
 
-# --- STYLE PERSONNALISÉ (BOUTONS ET ONGLETS) ---
+# --- STYLE PERSONNALISÉ ---
 st.markdown("""
     <style>
     /* Onglets plus visibles */
@@ -40,20 +40,26 @@ st.markdown("""
 # --- LOGIQUE TECHNIQUE : RAPPORT D'EXTRACTION ---
 def extraire_donnees_ext(file_content):
     contenu = file_content.decode('latin-1', errors='ignore')
+    
+    # 1. Capture des DEBUTS (04)
     motif_debut = r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}) \(04\) .*? Rapatriement de fichier (.*?) depuis"
     debuts = {}
     for match in re.finditer(motif_debut, contenu):
         ts_str, nom_fichier = match.groups()
         debuts[nom_fichier.strip()] = datetime.strptime(ts_str, "%d/%m/%Y %H:%M:%S")
 
+    # 2. Capture des FINS (05)
     motif_fin = r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}) \(05\) (.*?) (\S+) Téléchargement terminé \((.*?)\) - ([\d\.]+) Mo"
     extractions = []
     for match in re.finditer(motif_fin, contenu):
         ts_str, site_brut, ident, nom_fichier, taille = match.groups()
         fin_ts = datetime.strptime(ts_str, "%d/%m/%Y %H:%M:%S")
+        
+        # Nettoyage selon la règle : code 6 chiffres et tout ce qui suit
         site_clean = site_brut.strip()
         reg_match = re.search(r"(\d{6}\s*-\s*.*)", site_clean)
         nom_final = reg_match.group(1).strip() if reg_match else site_clean
+
         extractions.append({
             "Site (Code - Nom)": nom_final,
             "Transmis": fin_ts.strftime("%d/%m/%Y"),
@@ -66,13 +72,16 @@ def extraire_donnees_ext(file_content):
     if not extractions: return None
     df = pd.DataFrame(extractions)
     resultats = []
+    
     for (site, ident, date), groupe in df.groupby(["Site (Code - Nom)", "Traité part", "Transmis"]):
         v_start, v_end = groupe['Start'].dropna(), groupe['End'].dropna()
         if not v_start.empty and not v_end.empty:
             duree_sec = (v_end.max() - v_start.min()).total_seconds()
             m, s = divmod(int(duree_sec), 60)
             temps_str = f"{m} min {s} s" if m > 0 else f"{s} s"
-        else: temps_str = "N/A"
+        else:
+            temps_str = "N/A"
+        
         resultats.append({
             "Site (Code - Nom)": site, "Traité par": ident, "Date": date,
             "Nb d'Extractions": len(groupe), "Taille": f"{groupe['Taille_Mo'].sum():.2f} Mo",
@@ -85,23 +94,28 @@ def analyser_v10_logic(df_v10, df_plume):
     df_v10.columns = [c.strip() for c in df_v10.columns]
     df_v10['dt'] = pd.to_datetime(df_v10['Date de création'] + ' ' + df_v10['Heure de création'], dayfirst=True)
     df_v10 = df_v10.sort_values('dt')
+    
     states, maintenant = {}, datetime.now()
     inc_pat = r'(INC\d+)'
     
     for _, row in df_v10.iterrows():
         site, comm, ack = str(row['Produit']), str(row.get('Commentaire', '')), str(row.get("Heure d'acquittement", ''))
         text = f"{comm} {ack}"
+        
         is_m_entry = "Mettre en maintenance" in text or re.search(inc_pat, text, re.IGNORECASE)
         is_m_exit = "Sortir de maintenance" in text
         is_t_entry = "Mettre en travaux" in text or "En Travaux" in text
         is_t_exit = "Sortir de travaux" in text
         
-        if site not in states: states[site] = {'maint': False, 'travaux': False, 'inc': None, 'reason': '', 'date_trav': None}
+        if site not in states: 
+            states[site] = {'maint': False, 'travaux': False, 'inc': None, 'reason': '', 'date_trav': None}
+        
         if is_m_exit: states[site]['maint'] = False
         elif is_m_entry:
             states[site]['maint'] = True
             found = re.search(inc_pat, text, re.IGNORECASE)
             if found: states[site]['inc'] = found.group(1).upper()
+
         if is_t_exit: 
             states[site]['travaux'] = False
             states[site]['date_trav'] = None
@@ -124,6 +138,7 @@ def analyser_v10_logic(df_v10, df_plume):
                     "Statut Plume": r['État'], "Statut Prynvision": "En maintenance", 
                     "Affecté à": r.get('Affecté à', 'N/A')
                 })
+    
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
             diff = (maintenant - v['date_trav']).days
@@ -132,6 +147,7 @@ def analyser_v10_logic(df_v10, df_plume):
                 "Depuis (Jours)": f"{diff} jours", "Statut Prynvision": "En Travaux", 
                 "Raison (V10)": v['reason']
             })
+            
     return pd.DataFrame(anomalies), pd.DataFrame(travaux)
 
 # --- INTERFACE ---
@@ -157,7 +173,6 @@ with tab_v10:
                 st.session_state['df_anom'] = df_anom
                 st.session_state['df_trav'] = df_trav
                 
-                # Pop-up de succès avec les nombres
                 st.success(f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)")
             except Exception as e:
                 st.error(f"Erreur lors de l'analyse : {e}")

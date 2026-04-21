@@ -9,7 +9,6 @@ st.set_page_config(page_title="Outils Prynvision", layout="wide")
 # --- STYLE PERSONNALISÉ ---
 st.markdown("""
     <style>
-    /* Onglets plus visibles */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] {
         height: 50px;
@@ -22,7 +21,6 @@ st.markdown("""
         border-bottom-color: #1F6FEB !important;
         font-weight: bold;
     }
-    /* Boutons d'exportation bleus */
     div.stDownloadButton > button {
         background-color: #3498db !important;
         color: white !important;
@@ -30,36 +28,26 @@ st.markdown("""
         border: none;
         padding: 10px;
     }
-    div.stDownloadButton > button:hover {
-        background-color: #2980b9 !important;
-        color: white !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
 # --- LOGIQUE TECHNIQUE : RAPPORT D'EXTRACTION ---
 def extraire_donnees_ext(file_content):
     contenu = file_content.decode('latin-1', errors='ignore')
-    
-    # 1. Capture des DEBUTS (04)
     motif_debut = r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}) \(04\) .*? Rapatriement de fichier (.*?) depuis"
     debuts = {}
     for match in re.finditer(motif_debut, contenu):
         ts_str, nom_fichier = match.groups()
         debuts[nom_fichier.strip()] = datetime.strptime(ts_str, "%d/%m/%Y %H:%M:%S")
 
-    # 2. Capture des FINS (05)
     motif_fin = r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}) \(05\) (.*?) (\S+) Téléchargement terminé \((.*?)\) - ([\d\.]+) Mo"
     extractions = []
     for match in re.finditer(motif_fin, contenu):
         ts_str, site_brut, ident, nom_fichier, taille = match.groups()
         fin_ts = datetime.strptime(ts_str, "%d/%m/%Y %H:%M:%S")
-        
-        # Nettoyage selon la règle : code 6 chiffres et tout ce qui suit
         site_clean = site_brut.strip()
         reg_match = re.search(r"(\d{6}\s*-\s*.*)", site_clean)
         nom_final = reg_match.group(1).strip() if reg_match else site_clean
-
         extractions.append({
             "Site (Code - Nom)": nom_final,
             "Transmis": fin_ts.strftime("%d/%m/%Y"),
@@ -72,16 +60,13 @@ def extraire_donnees_ext(file_content):
     if not extractions: return None
     df = pd.DataFrame(extractions)
     resultats = []
-    
     for (site, ident, date), groupe in df.groupby(["Site (Code - Nom)", "Traité part", "Transmis"]):
         v_start, v_end = groupe['Start'].dropna(), groupe['End'].dropna()
         if not v_start.empty and not v_end.empty:
             duree_sec = (v_end.max() - v_start.min()).total_seconds()
             m, s = divmod(int(duree_sec), 60)
             temps_str = f"{m} min {s} s" if m > 0 else f"{s} s"
-        else:
-            temps_str = "N/A"
-        
+        else: temps_str = "N/A"
         resultats.append({
             "Site (Code - Nom)": site, "Traité par": ident, "Date": date,
             "Nb d'Extractions": len(groupe), "Taille": f"{groupe['Taille_Mo'].sum():.2f} Mo",
@@ -94,7 +79,6 @@ def analyser_v10_logic(df_v10, df_plume):
     df_v10.columns = [c.strip() for c in df_v10.columns]
     df_v10['dt'] = pd.to_datetime(df_v10['Date de création'] + ' ' + df_v10['Heure de création'], dayfirst=True)
     df_v10 = df_v10.sort_values('dt')
-    
     states, maintenant = {}, datetime.now()
     inc_pat = r'(INC\d+)'
     
@@ -102,23 +86,20 @@ def analyser_v10_logic(df_v10, df_plume):
         site, comm, ack = str(row['Produit']), str(row.get('Commentaire', '')), str(row.get("Heure d'acquittement", ''))
         text = f"{comm} {ack}"
         
-        is_m_entry = "Mettre en maintenance" in text or re.search(inc_pat, text, re.IGNORECASE)
-        is_m_exit = "Sortir de maintenance" in text
-        is_t_entry = "Mettre en travaux" in text or "En Travaux" in text
-        is_t_exit = "Sortir de travaux" in text
+        # AJOUT : IGNORE LA CASSE (case=False via regex)
+        is_m_entry = bool(re.search(r"Mettre en maintenance", text, re.IGNORECASE)) or bool(re.search(inc_pat, text, re.IGNORECASE))
+        is_m_exit = bool(re.search(r"Sortir de maintenance", text, re.IGNORECASE))
+        is_t_entry = bool(re.search(r"Mettre en travaux|En Travaux", text, re.IGNORECASE))
+        is_t_exit = bool(re.search(r"Sortir de travaux", text, re.IGNORECASE))
         
-        if site not in states: 
-            states[site] = {'maint': False, 'travaux': False, 'inc': None, 'reason': '', 'date_trav': None}
-        
+        if site not in states: states[site] = {'maint': False, 'travaux': False, 'inc': None, 'reason': '', 'date_trav': None}
         if is_m_exit: states[site]['maint'] = False
         elif is_m_entry:
             states[site]['maint'] = True
             found = re.search(inc_pat, text, re.IGNORECASE)
             if found: states[site]['inc'] = found.group(1).upper()
-
         if is_t_exit: 
-            states[site]['travaux'] = False
-            states[site]['date_trav'] = None
+            states[site]['travaux'] = False; states[site]['date_trav'] = None
         elif is_t_entry:
             states[site]['travaux'] = True
             states[site]['reason'] = ack if "travaux" in ack.lower() else comm
@@ -138,7 +119,6 @@ def analyser_v10_logic(df_v10, df_plume):
                     "Statut Plume": r['État'], "Statut Prynvision": "En maintenance", 
                     "Affecté à": r.get('Affecté à', 'N/A')
                 })
-    
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
             diff = (maintenant - v['date_trav']).days
@@ -147,12 +127,10 @@ def analyser_v10_logic(df_v10, df_plume):
                 "Depuis (Jours)": f"{diff} jours", "Statut Prynvision": "En Travaux", 
                 "Raison (V10)": v['reason']
             })
-            
     return pd.DataFrame(anomalies), pd.DataFrame(travaux)
 
 # --- INTERFACE ---
 st.title("🛡️ Outils Prynvision")
-
 tab_v10, tab_ext = st.tabs(["📊 Analyse V10 / Plume", "📹 Rapport d'Extraction"])
 
 with tab_v10:
@@ -163,41 +141,28 @@ with tab_v10:
     
     if st.button("LANCER L'ANALYSE V10", type="primary"):
         if file_v10:
-            try:
-                df_v10_raw = pd.read_csv(file_v10, sep=';', encoding='latin-1')
-                df_p_raw = None
-                if file_plume:
-                    df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
-                
-                df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
-                st.session_state['df_anom'] = df_anom
-                st.session_state['df_trav'] = df_trav
-                
-                st.success(f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)")
-            except Exception as e:
-                st.error(f"Erreur lors de l'analyse : {e}")
-        else:
-            st.error("Le fichier V10 est requis.")
+            df_v10_raw = pd.read_csv(file_v10, sep=';', encoding='latin-1')
+            df_p_raw = None
+            if file_plume:
+                df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
+            df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
+            st.session_state['df_anom'], st.session_state['df_trav'] = df_anom, df_trav
+            st.success(f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)")
+        else: st.error("Le fichier V10 est requis.")
 
     if 'df_anom' in st.session_state:
         search_v10 = st.text_input("🔍 Filtrer les résultats (Site, INC, Raison...)", key="search_v10")
         sub_tab_maint, sub_tab_trav = st.tabs(["🔧 Anomalies Maintenance", "🏗️ Sites en Travaux"])
-        
         with sub_tab_maint:
-            df_f_maint = st.session_state['df_anom']
-            if search_v10:
-                df_f_maint = df_f_maint[df_f_maint.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
-            st.dataframe(df_f_maint, use_container_width=True)
-            if not df_f_maint.empty:
-                st.download_button("📥 Exporter Maintenance (CSV)", df_f_maint.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Export_Maintenance.csv", "text/csv")
-
+            df_f = st.session_state['df_anom']
+            if search_v10: df_f = df_f[df_f.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
+            st.dataframe(df_f, use_container_width=True)
+            if not df_f.empty: st.download_button("📥 Exporter Maintenance (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Export_Maintenance.csv", "text/csv")
         with sub_tab_trav:
-            df_f_trav = st.session_state['df_trav']
-            if search_v10:
-                df_f_trav = df_f_trav[df_f_trav.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
-            st.dataframe(df_f_trav, use_container_width=True)
-            if not df_f_trav.empty:
-                st.download_button("📥 Exporter Travaux (CSV)", df_f_trav.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Export_Travaux.csv", "text/csv")
+            df_f_t = st.session_state['df_trav']
+            if search_v10: df_f_t = df_f_t[df_f_t.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
+            st.dataframe(df_f_t, use_container_width=True)
+            if not df_f_t.empty: st.download_button("📥 Exporter Travaux (CSV)", df_f_t.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Export_Travaux.csv", "text/csv")
 
 with tab_ext:
     st.header("Rapport d'Extraction")
@@ -208,5 +173,4 @@ with tab_ext:
             search_ext = st.text_input("🔍 Filtrer les extractions...", key="search_ext")
             df_f = df_ext[df_ext.apply(lambda r: r.astype(str).str.contains(search_ext, case=False).any(), axis=1)] if search_ext else df_ext
             st.dataframe(df_f, use_container_width=True)
-            if not df_f.empty:
-                st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")
+            st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")

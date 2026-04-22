@@ -141,7 +141,7 @@ def analyser_v10_logic(df_v10, df_plume):
                     "Statut Prynvision": "En maintenance",
                     "Affecté à": r.get('Affecté à', 'N/A'),
                     "_alerte": jours_clos >= 10,
-                    "_jours": jours_clos # Utilisé pour le tri
+                    "_jours": jours_clos
                 })
     
     for s, v in states.items():
@@ -176,7 +176,8 @@ with tab_v10:
             
             df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
             st.session_state['df_anom'], st.session_state['df_trav'] = df_anom, df_trav
-            st.session_state['v10_msg'] = f"Analyse terminée avec succès !"
+            # CORRECTION : On réinjecte les longueurs dans le message
+            st.session_state['v10_msg'] = f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)"
         else: st.error("Le fichier V10 est requis.")
 
     if 'v10_msg' in st.session_state:
@@ -189,28 +190,19 @@ with tab_v10:
         with t_maint:
             df_f = st.session_state['df_anom'].copy()
             if search_v10: df_f = df_f[df_f.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
-            
             def colorier_texte(row):
                 return ['color: red' if row['_alerte'] else '' for _ in row]
-
             if not df_f.empty:
-                # Tri automatique par jours d'alerte (décroissant) au chargement
                 df_f = df_f.sort_values('_jours', ascending=False)
-                st.dataframe(
-                    df_f.style.apply(colorier_texte, axis=1), 
-                    use_container_width=True, 
-                    column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"),
-                    hide_index=True
-                )
+                st.dataframe(df_f.style.apply(colorier_texte, axis=1), use_container_width=True, 
+                             column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"), hide_index=True)
             else: st.info("Aucune anomalie détectée.")
 
         with t_trav:
             df_f_t = st.session_state['df_trav'].copy()
             if search_v10: df_f_t = df_f_t[df_f_t.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
             if not df_f_t.empty:
-                # Conversion en format date lisible pour l'affichage mais triable pour Streamlit
-                df_f_t = df_f_t.sort_values('Depuis (Jours)', ascending=False)
-                st.dataframe(df_f_t, use_container_width=True, hide_index=True)
+                st.dataframe(df_f_t.sort_values('Depuis (Jours)', ascending=False), use_container_width=True, hide_index=True)
 
 with tab_ext:
     st.header("Rapport d'Extraction")

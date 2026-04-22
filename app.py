@@ -28,6 +28,16 @@ st.markdown("""
         border: none;
         padding: 10px;
     }
+    /* Style pour le message de statut permanent */
+    .status-box {
+        padding: 15px;
+        border-radius: 5px;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -74,16 +84,11 @@ def extraire_donnees_ext(file_content):
         })
     return pd.DataFrame(resultats)
 
-# --- LOGIQUE TECHNIQUE : ANALYSE V10 (MISE À JOUR EXCLUSIVITÉ) ---
+# --- LOGIQUE TECHNIQUE : ANALYSE V10 ---
 def analyser_v10_logic(df_v10, df_plume):
-    # Nettoyage des colonnes
     df_v10.columns = [c.strip() for c in df_v10.columns]
-    
-    # Identification robuste des colonnes Date et Heure (gestion des accents)
     date_col = [c for c in df_v10.columns if 'Date' in c and 'cr' in c][0]
     time_col = [c for c in df_v10.columns if 'Heure' in c and 'cr' in c][0]
-    
-    # Conversion et Tri chronologique STRICT
     df_v10['dt'] = pd.to_datetime(df_v10[date_col] + ' ' + df_v10[time_col], dayfirst=True)
     df_v10 = df_v10.sort_values('dt')
     
@@ -96,13 +101,11 @@ def analyser_v10_logic(df_v10, df_plume):
         ack = str(row.get("Heure d'acquittement", ''))
         text = f"{comm} {ack}"
         
-        # Détection des mots clés (insensible à la casse)
         line_m_entry = bool(re.search(r"Mettre en maintenance", text, re.IGNORECASE))
         line_m_exit = bool(re.search(r"Sortir de maintenance", text, re.IGNORECASE))
         line_t_entry = bool(re.search(r"Mettre en travaux|En Travaux", text, re.IGNORECASE))
         line_t_exit = bool(re.search(r"Sortir de travaux", text, re.IGNORECASE))
         
-        # Si aucun mot clé explicite, un INC seul vaut une entrée en maintenance
         if not any([line_m_entry, line_m_exit, line_t_entry, line_t_exit]):
             if re.search(inc_pat, text, re.IGNORECASE):
                 line_m_entry = True
@@ -110,32 +113,27 @@ def analyser_v10_logic(df_v10, df_plume):
         if site not in states:
             states[site] = {'maint': False, 'travaux': False, 'inc': None, 'reason': '', 'date_trav': None}
         
-        # --- APPLICATION DES ÉTATS AVEC EXCLUSIVITÉ ---
         if line_m_entry:
             states[site]['maint'] = True
-            states[site]['travaux'] = False  # L'entrée en maintenance annule les travaux
+            states[site]['travaux'] = False
             states[site]['date_trav'] = None
             found = re.search(inc_pat, text, re.IGNORECASE)
             if found: states[site]['inc'] = found.group(1).upper()
             
         if line_t_entry:
             states[site]['travaux'] = True
-            states[site]['maint'] = False    # L'entrée en travaux annule la maintenance
+            states[site]['maint'] = False
             states[site]['inc'] = None
             states[site]['reason'] = ack if "travaux" in ack.lower() else comm
             if states[site]['date_trav'] is None: 
                 states[site]['date_trav'] = row['dt']
 
-        if line_m_exit:
-            states[site]['maint'] = False
-            
-        if line_t_exit:
+        if line_m_exit: states[site]['maint'] = False
+        if line_t_exit: 
             states[site]['travaux'] = False
             states[site]['date_trav'] = None
             
     anomalies, travaux = [], []
-    
-    # 1. Traitement des Anomalies Maintenance
     if df_plume is not None:
         df_plume.columns = [c.strip() for c in df_plume.columns]
         m_list = [{'Site': s, 'INC_V10': v['inc']} for s, v in states.items() if v['maint'] and v['inc']]
@@ -150,7 +148,6 @@ def analyser_v10_logic(df_v10, df_plume):
                     "Affecté à": r.get('Affecté à', 'N/A')
                 })
     
-    # 2. Traitement des Travaux
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
             diff = (maintenant - v['date_trav']).days
@@ -180,11 +177,16 @@ with tab_v10:
                 df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
             
             df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
-            st.session_state['df_anom'], st.session_state['df_trav'] = df_anom, df_trav
-            
-            # Pop-up de succès avec les nombres précis
-            st.success(f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)")
-        else: st.error("Le fichier V10 est requis.")
+            st.session_state['df_anom'] = df_anom
+            st.session_state['df_trav'] = df_trav
+            # On stocke le message de succès en session pour qu'il reste affiché
+            st.session_state['v10_msg'] = f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)"
+        else:
+            st.error("Le fichier V10 est requis.")
+
+    # Affichage permanent du message s'il existe
+    if 'v10_msg' in st.session_state:
+        st.markdown(f'<div class="status-box">{st.session_state["v10_msg"]}</div>', unsafe_allow_html=True)
 
     if 'df_anom' in st.session_state:
         search_v10 = st.text_input("🔍 Filtrer les résultats (Site, INC, Raison...)", key="search_v10")

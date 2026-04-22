@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(page_title="Outils Prynvision", layout="wide")
@@ -40,7 +40,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOGIQUE TECHNIQUE : RAPPORT D'EXTRACTION (Inchangée) ---
+# --- LOGIQUE TECHNIQUE : RAPPORT D'EXTRACTION ---
 def extraire_donnees_ext(file_content):
     contenu = file_content.decode('latin-1', errors='ignore')
     motif_debut = r"(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}) \(04\) .*? Rapatriement de fichier (.*?) depuis"
@@ -69,7 +69,7 @@ def extraire_donnees_ext(file_content):
     if not extractions: return None
     df = pd.DataFrame(extractions)
     resultats = []
-    for (site, ident, date), groupe in df.groupby(["Site (Code - Nom)"], ["Traité part"], ["Transmis"]):
+    for (site, ident, date), groupe in df.groupby(["Site (Code - Nom)", "Traité part", "Transmis"]):
         v_start, v_end = groupe['Start'].dropna(), groupe['End'].dropna()
         if not v_start.empty and not v_end.empty:
             duree_sec = (v_end.max() - v_start.min()).total_seconds()
@@ -83,7 +83,7 @@ def extraire_donnees_ext(file_content):
         })
     return pd.DataFrame(resultats)
 
-# --- LOGIQUE TECHNIQUE : ANALYSE V10 AVEC ALERTE ROUGE ---
+# --- LOGIQUE TECHNIQUE : ANALYSE V10 ---
 def analyser_v10_logic(df_v10, df_plume):
     df_v10.columns = [c.strip() for c in df_v10.columns]
     date_col = [c for c in df_v10.columns if 'Date' in c and 'cr' in c][0]
@@ -95,7 +95,9 @@ def analyser_v10_logic(df_v10, df_plume):
     inc_pat = r'(INC\d+)'
     
     for _, row in df_v10.iterrows():
-        site, comm, ack = str(row['Produit']), str(row.get('Commentaire', '')), str(row.get("Heure d'acquittement", ''))
+        site = str(row['Produit'])
+        comm = str(row.get('Commentaire', ''))
+        ack = str(row.get("Heure d'acquittement", ''))
         text = f"{comm} {ack}"
         
         l_m_en = bool(re.search(r"Mettre en maintenance", text, re.IGNORECASE))
@@ -125,14 +127,13 @@ def analyser_v10_logic(df_v10, df_plume):
         m_list = [{'Site': s, 'INC_V10': v['inc']} for s, v in states.items() if v['maint'] and v['inc']]
         if m_list:
             c_inc = 'Numéro' if 'Numéro' in df_plume.columns else df_plume.columns[0]
-            # On cherche la colonne qui contient la date de résolution/fermeture
+            # Colonne pour la date de résolution
             date_resol_col = [c for c in df_plume.columns if 'Ouvert' in c or 'jour' in c][0] 
             
             merged = pd.merge(pd.DataFrame(m_list), df_plume, left_on='INC_V10', right_on=c_inc, how='inner')
             anom_df = merged[merged['État'].isin(['Résolu', 'Fermé'])].copy()
             
             for _, r in anom_df.iterrows():
-                # Calcul de la différence de jours
                 date_cloture = pd.to_datetime(r[date_resol_col])
                 jours_clos = (maintenant - date_cloture).days
                 
@@ -140,16 +141,19 @@ def analyser_v10_logic(df_v10, df_plume):
                     "Code et Nom du Site": r['Site'], 
                     "N° INC": r['INC_V10'], 
                     "Statut Plume": r['État'],
+                    "Statut Prynvision": "En maintenance",
                     "Clos depuis": f"{jours_clos} jours",
                     "Affecté à": r.get('Affecté à', 'N/A'),
-                    "_alerte": jours_clos > 3 # Champ caché pour le style
+                    "_alerte": jours_clos >= 10
                 })
     
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
             travaux.append({
-                "Code et Nom du Site": s, "Mise en Travaux": v['date_trav'].strftime('%d/%m/%Y'), 
+                "Code et Nom du Site": s, 
+                "Mise en Travaux": v['date_trav'].strftime('%d/%m/%Y'), 
                 "Depuis (Jours)": f"{(maintenant - v['date_trav']).days} jours", 
+                "Statut Prynvision": "En Travaux",
                 "Raison (V10)": v['reason']
             })
             
@@ -166,13 +170,16 @@ with tab_v10:
     file_plume = c2.file_uploader("2. Importer Historique Plume (Excel/CSV)", type=["csv", "xlsx"])
     
     if st.button("LANCER L'ANALYSE V10", type="primary"):
-        if file_v10 and file_plume:
+        if file_v10:
             df_v10_raw = pd.read_csv(file_v10, sep=';', encoding='latin-1')
-            df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
+            df_p_raw = None
+            if file_plume:
+                df_p_raw = pd.read_excel(file_plume) if file_plume.name.endswith('xlsx') else pd.read_csv(file_plume)
+            
             df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
             st.session_state['df_anom'], st.session_state['df_trav'] = df_anom, df_trav
-            st.session_state['v10_msg'] = f"Analyse terminée : {len(df_anom)} anomalies maintenance, {len(df_trav)} sites en travaux."
-        else: st.error("Les DEUX fichiers (V10 et Plume) sont nécessaires pour cette option.")
+            st.session_state['v10_msg'] = f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)"
+        else: st.error("Le fichier V10 est requis.")
 
     if 'v10_msg' in st.session_state:
         st.markdown(f'<div class="status-box">{st.session_state["v10_msg"]}</div>', unsafe_allow_html=True)
@@ -185,16 +192,27 @@ with tab_v10:
             df_f = st.session_state['df_anom']
             if search_v10: df_f = df_f[df_f.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
             
-            # --- APPLICATION DE LA COULEUR ROUGE ---
-            def colorier_ligne(row):
-                return ['background-color: #ffcccc' if row['_alerte'] else '' for _ in row]
+            # Coloration du texte en rouge si alerte (délai >= 10 jours)
+            def colorier_texte(row):
+                return ['color: red' if row['_alerte'] else '' for _ in row]
 
             if not df_f.empty:
-                # On affiche tout sauf la colonne technique '_alerte'
-                st.dataframe(df_f.style.apply(colorier_ligne, axis=1), use_container_width=True, column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Clos depuis", "Affecté à"))
+                st.dataframe(df_f.style.apply(colorier_texte, axis=1), use_container_width=True, 
+                             column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Clos depuis", "Affecté à"))
             else: st.info("Aucune anomalie détectée.")
 
         with t_trav:
             df_f_t = st.session_state['df_trav']
             if search_v10: df_f_t = df_f_t[df_f_t.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
             st.dataframe(df_f_t, use_container_width=True)
+
+with tab_ext:
+    st.header("Rapport d'Extraction")
+    file_ext = st.file_uploader("Importer fichier Rapatriement (.txt)", type="txt")
+    if file_ext:
+        df_ext = extraire_donnees_ext(file_ext.getvalue())
+        if df_ext is not None:
+            search_ext = st.text_input("🔍 Filtrer...", key="search_ext")
+            df_f = df_ext[df_ext.apply(lambda r: r.astype(str).str.contains(search_ext, case=False).any(), axis=1)] if search_ext else df_ext
+            st.dataframe(df_f, use_container_width=True)
+            st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")

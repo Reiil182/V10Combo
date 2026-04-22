@@ -59,7 +59,7 @@ def extraire_donnees_ext(file_content):
         nom_final = reg_match.group(1).strip() if reg_match else site_clean
         extractions.append({
             "Site (Code - Nom)": nom_final,
-            "Transmis": fin_ts.strftime("%d/%m/%Y"),
+            "Transmis": fin_ts,
             "Traité part": ident,
             "Taille_Mo": float(taille),
             "Start": debuts.get(nom_fichier.strip()),
@@ -69,7 +69,7 @@ def extraire_donnees_ext(file_content):
     if not extractions: return None
     df = pd.DataFrame(extractions)
     resultats = []
-    for (site, ident, date), groupe in df.groupby(["Site (Code - Nom)", "Traité part", "Transmis"]):
+    for (site, ident), groupe in df.groupby(["Site (Code - Nom)", "Traité part"]):
         v_start, v_end = groupe['Start'].dropna(), groupe['End'].dropna()
         if not v_start.empty and not v_end.empty:
             duree_sec = (v_end.max() - v_start.min()).total_seconds()
@@ -77,8 +77,11 @@ def extraire_donnees_ext(file_content):
             temps_str = f"{m} min {s} s" if m > 0 else f"{s} s"
         else: temps_str = "N/A"
         resultats.append({
-            "Site (Code - Nom)": site, "Traité par": ident, "Date": date,
-            "Nb d'Extractions": len(groupe), "Taille": f"{groupe['Taille_Mo'].sum():.2f} Mo",
+            "Site (Code - Nom)": site, 
+            "Traité par": ident, 
+            "Date": groupe['End'].max().strftime("%d/%m/%Y"),
+            "Nb d'Extractions": int(len(groupe)), 
+            "Taille (Mo)": round(groupe['Taille_Mo'].sum(), 2),
             "Temps estimé": temps_str
         })
     return pd.DataFrame(resultats)
@@ -95,11 +98,8 @@ def analyser_v10_logic(df_v10, df_plume):
     inc_pat = r'(INC\d+)'
     
     for _, row in df_v10.iterrows():
-        site = str(row['Produit'])
-        comm = str(row.get('Commentaire', ''))
-        ack = str(row.get("Heure d'acquittement", ''))
+        site, comm, ack = str(row['Produit']), str(row.get('Commentaire', '')), str(row.get("Heure d'acquittement", ''))
         text = f"{comm} {ack}"
-        
         l_m_en = bool(re.search(r"Mettre en maintenance", text, re.IGNORECASE))
         l_m_ex = bool(re.search(r"Sortir de maintenance", text, re.IGNORECASE))
         l_t_en = bool(re.search(r"Mettre en travaux|En Travaux", text, re.IGNORECASE))
@@ -127,32 +127,30 @@ def analyser_v10_logic(df_v10, df_plume):
         m_list = [{'Site': s, 'INC_V10': v['inc']} for s, v in states.items() if v['maint'] and v['inc']]
         if m_list:
             c_inc = 'Numéro' if 'Numéro' in df_plume.columns else df_plume.columns[0]
-            # Colonne pour la date de résolution
             date_resol_col = [c for c in df_plume.columns if 'Ouvert' in c or 'jour' in c][0] 
-            
             merged = pd.merge(pd.DataFrame(m_list), df_plume, left_on='INC_V10', right_on=c_inc, how='inner')
             anom_df = merged[merged['État'].isin(['Résolu', 'Fermé'])].copy()
             
             for _, r in anom_df.iterrows():
                 date_cloture = pd.to_datetime(r[date_resol_col])
                 jours_clos = (maintenant - date_cloture).days
-                
                 anomalies.append({
                     "Code et Nom du Site": r['Site'], 
                     "N° INC": r['INC_V10'], 
                     "Statut Plume": r['État'],
                     "Statut Prynvision": "En maintenance",
-                    "Clos depuis": f"{jours_clos} jours",
                     "Affecté à": r.get('Affecté à', 'N/A'),
-                    "_alerte": jours_clos >= 10
+                    "_alerte": jours_clos >= 10,
+                    "_jours": jours_clos # Utilisé pour le tri
                 })
     
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
+            diff = (maintenant - v['date_trav']).days
             travaux.append({
                 "Code et Nom du Site": s, 
-                "Mise en Travaux": v['date_trav'].strftime('%d/%m/%Y'), 
-                "Depuis (Jours)": f"{(maintenant - v['date_trav']).days} jours", 
+                "Mise en Travaux": v['date_trav'], 
+                "Depuis (Jours)": int(diff), 
                 "Statut Prynvision": "En Travaux",
                 "Raison (V10)": v['reason']
             })
@@ -178,7 +176,7 @@ with tab_v10:
             
             df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
             st.session_state['df_anom'], st.session_state['df_trav'] = df_anom, df_trav
-            st.session_state['v10_msg'] = f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)"
+            st.session_state['v10_msg'] = f"Analyse terminée avec succès !"
         else: st.error("Le fichier V10 est requis.")
 
     if 'v10_msg' in st.session_state:
@@ -189,22 +187,30 @@ with tab_v10:
         t_maint, t_trav = st.tabs(["🔧 Anomalies Maintenance", "🏗️ Sites en Travaux"])
         
         with t_maint:
-            df_f = st.session_state['df_anom']
+            df_f = st.session_state['df_anom'].copy()
             if search_v10: df_f = df_f[df_f.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
             
-            # Coloration du texte en rouge si alerte (délai >= 10 jours)
             def colorier_texte(row):
                 return ['color: red' if row['_alerte'] else '' for _ in row]
 
             if not df_f.empty:
-                st.dataframe(df_f.style.apply(colorier_texte, axis=1), use_container_width=True, 
-                             column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Clos depuis", "Affecté à"))
+                # Tri automatique par jours d'alerte (décroissant) au chargement
+                df_f = df_f.sort_values('_jours', ascending=False)
+                st.dataframe(
+                    df_f.style.apply(colorier_texte, axis=1), 
+                    use_container_width=True, 
+                    column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"),
+                    hide_index=True
+                )
             else: st.info("Aucune anomalie détectée.")
 
         with t_trav:
-            df_f_t = st.session_state['df_trav']
+            df_f_t = st.session_state['df_trav'].copy()
             if search_v10: df_f_t = df_f_t[df_f_t.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
-            st.dataframe(df_f_t, use_container_width=True)
+            if not df_f_t.empty:
+                # Conversion en format date lisible pour l'affichage mais triable pour Streamlit
+                df_f_t = df_f_t.sort_values('Depuis (Jours)', ascending=False)
+                st.dataframe(df_f_t, use_container_width=True, hide_index=True)
 
 with tab_ext:
     st.header("Rapport d'Extraction")
@@ -214,5 +220,5 @@ with tab_ext:
         if df_ext is not None:
             search_ext = st.text_input("🔍 Filtrer...", key="search_ext")
             df_f = df_ext[df_ext.apply(lambda r: r.astype(str).str.contains(search_ext, case=False).any(), axis=1)] if search_ext else df_ext
-            st.dataframe(df_f, use_container_width=True)
+            st.dataframe(df_f.sort_values("Taille (Mo)", ascending=False), use_container_width=True, hide_index=True)
             st.download_button("📥 Exporter le Rapport (CSV)", df_f.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig'), "Rapport_Extractions.csv", "text/csv")

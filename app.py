@@ -91,8 +91,14 @@ def analyser_v10_logic(df_v10, df_plume):
     df_v10.columns = [c.strip() for c in df_v10.columns]
     date_col = [c for c in df_v10.columns if 'Date' in c and 'cr' in c][0]
     time_col = [c for c in df_v10.columns if 'Heure' in c and 'cr' in c][0]
-    df_v10['dt'] = pd.to_datetime(df_v10[date_col] + ' ' + df_v10[time_col], dayfirst=True)
-    df_v10 = df_v10.sort_values('dt')
+    
+    # SECURITÉ : Conversion avec gestion d'erreurs pour éviter le plantage
+    df_v10['dt'] = pd.to_datetime(
+        df_v10[date_col].astype(str) + ' ' + df_v10[time_col].astype(str), 
+        dayfirst=True, 
+        errors='coerce'
+    )
+    df_v10 = df_v10.dropna(subset=['dt']).sort_values('dt')
     
     states, maintenant = {}, datetime.now()
     inc_pat = r'(INC\d+)'
@@ -176,7 +182,6 @@ with tab_v10:
             
             df_anom, df_trav = analyser_v10_logic(df_v10_raw, df_p_raw)
             st.session_state['df_anom'], st.session_state['df_trav'] = df_anom, df_trav
-            # CORRECTION : On réinjecte les longueurs dans le message
             st.session_state['v10_msg'] = f"Analyse terminée avec succès ! ({len(df_anom)} cas en maintenance, {len(df_trav)} sites en travaux)"
         else: st.error("Le fichier V10 est requis.")
 
@@ -190,12 +195,20 @@ with tab_v10:
         with t_maint:
             df_f = st.session_state['df_anom'].copy()
             if search_v10: df_f = df_f[df_f.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
+            
+            # Fonction pour colorier uniquement le TEXTE en rouge
             def colorier_texte(row):
                 return ['color: red' if row['_alerte'] else '' for _ in row]
+
             if not df_f.empty:
+                # Tri automatique par ancienneté (les plus vieux en haut)
                 df_f = df_f.sort_values('_jours', ascending=False)
-                st.dataframe(df_f.style.apply(colorier_texte, axis=1), use_container_width=True, 
-                             column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"), hide_index=True)
+                st.dataframe(
+                    df_f.style.apply(colorier_texte, axis=1), 
+                    use_container_width=True, 
+                    column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"),
+                    hide_index=True
+                )
             else: st.info("Aucune anomalie détectée.")
 
         with t_trav:

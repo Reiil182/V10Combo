@@ -93,6 +93,7 @@ def analyser_v10_logic(df_v10, df_plume):
     date_col = [c for c in df_v10.columns if 'Date' in c and 'cr' in c][0]
     time_col = [c for c in df_v10.columns if 'Heure' in c and 'cr' in c][0]
     
+    # SECURITÉ : Gestion des erreurs de date pour éviter le crash
     df_v10['dt'] = pd.to_datetime(
         df_v10[date_col].astype(str) + ' ' + df_v10[time_col].astype(str), 
         dayfirst=True, 
@@ -150,6 +151,11 @@ def analyser_v10_logic(df_v10, df_plume):
                     "_jours": jours_clos
                 })
     
+    # Nettoyage des sites supprimés (nan)
+    df_anom_final = pd.DataFrame(anomalies)
+    if not df_anom_final.empty:
+        df_anom_final = df_anom_final[df_anom_final["Code et Nom du Site"].astype(str) != 'nan']
+    
     for s, v in states.items():
         if v['travaux'] and v['date_trav']:
             diff = (maintenant - v['date_trav']).days
@@ -162,7 +168,7 @@ def analyser_v10_logic(df_v10, df_plume):
                 "_jours_t": int(diff)
             })
             
-    return pd.DataFrame(anomalies), pd.DataFrame(travaux)
+    return df_anom_final, pd.DataFrame(travaux)
 
 # --- INTERFACE ---
 st.title("🛡️ Outils Prynvision")
@@ -205,7 +211,6 @@ with tab_v10:
                 st.dataframe(df_f.style.apply(colorier_texte, axis=1), use_container_width=True, 
                              column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"), hide_index=True)
                 
-                # BOUTON EXPORT MAINTENANCE
                 csv_m = df_f.drop(columns=['_alerte', '_jours']).to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                 st.download_button("📥 Exporter Maintenance (CSV)", csv_m, "Maintenance_Anomalies.csv", "text/csv")
             else: st.info("Aucune anomalie détectée.")
@@ -217,7 +222,6 @@ with tab_v10:
                 df_f_t = df_f_t.sort_values('_jours_t', ascending=False)
                 st.dataframe(df_f_t.drop(columns=['_jours_t']), use_container_width=True, hide_index=True)
                 
-                # BOUTON EXPORT TRAVAUX
                 csv_t = df_f_t.drop(columns=['_jours_t']).to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                 st.download_button("📥 Exporter Travaux (CSV)", csv_t, "Sites_En_Travaux.csv", "text/csv")
 

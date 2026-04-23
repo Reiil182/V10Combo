@@ -27,6 +27,7 @@ st.markdown("""
         width: 100%;
         border: none;
         padding: 10px;
+        margin-top: 10px;
     }
     .status-box {
         padding: 15px;
@@ -92,7 +93,6 @@ def analyser_v10_logic(df_v10, df_plume):
     date_col = [c for c in df_v10.columns if 'Date' in c and 'cr' in c][0]
     time_col = [c for c in df_v10.columns if 'Heure' in c and 'cr' in c][0]
     
-    # SECURITÉ : Conversion avec gestion d'erreurs pour éviter le plantage
     df_v10['dt'] = pd.to_datetime(
         df_v10[date_col].astype(str) + ' ' + df_v10[time_col].astype(str), 
         dayfirst=True, 
@@ -155,10 +155,11 @@ def analyser_v10_logic(df_v10, df_plume):
             diff = (maintenant - v['date_trav']).days
             travaux.append({
                 "Code et Nom du Site": s, 
-                "Mise en Travaux": v['date_trav'], 
+                "Mise en Travaux": v['date_trav'].strftime('%d/%m/%Y'), 
                 "Depuis (Jours)": int(diff), 
                 "Statut Prynvision": "En Travaux",
-                "Raison (V10)": v['reason']
+                "Raison (V10)": v['reason'],
+                "_jours_t": int(diff)
             })
             
     return pd.DataFrame(anomalies), pd.DataFrame(travaux)
@@ -196,26 +197,29 @@ with tab_v10:
             df_f = st.session_state['df_anom'].copy()
             if search_v10: df_f = df_f[df_f.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
             
-            # Fonction pour colorier uniquement le TEXTE en rouge
             def colorier_texte(row):
                 return ['color: red' if row['_alerte'] else '' for _ in row]
 
             if not df_f.empty:
-                # Tri automatique par ancienneté (les plus vieux en haut)
                 df_f = df_f.sort_values('_jours', ascending=False)
-                st.dataframe(
-                    df_f.style.apply(colorier_texte, axis=1), 
-                    use_container_width=True, 
-                    column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"),
-                    hide_index=True
-                )
+                st.dataframe(df_f.style.apply(colorier_texte, axis=1), use_container_width=True, 
+                             column_order=("Code et Nom du Site", "N° INC", "Statut Plume", "Statut Prynvision", "Affecté à"), hide_index=True)
+                
+                # BOUTON EXPORT MAINTENANCE
+                csv_m = df_f.drop(columns=['_alerte', '_jours']).to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 Exporter Maintenance (CSV)", csv_m, "Maintenance_Anomalies.csv", "text/csv")
             else: st.info("Aucune anomalie détectée.")
 
         with t_trav:
             df_f_t = st.session_state['df_trav'].copy()
             if search_v10: df_f_t = df_f_t[df_f_t.apply(lambda r: r.astype(str).str.contains(search_v10, case=False).any(), axis=1)]
             if not df_f_t.empty:
-                st.dataframe(df_f_t.sort_values('Depuis (Jours)', ascending=False), use_container_width=True, hide_index=True)
+                df_f_t = df_f_t.sort_values('_jours_t', ascending=False)
+                st.dataframe(df_f_t.drop(columns=['_jours_t']), use_container_width=True, hide_index=True)
+                
+                # BOUTON EXPORT TRAVAUX
+                csv_t = df_f_t.drop(columns=['_jours_t']).to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 Exporter Travaux (CSV)", csv_t, "Sites_En_Travaux.csv", "text/csv")
 
 with tab_ext:
     st.header("Rapport d'Extraction")
